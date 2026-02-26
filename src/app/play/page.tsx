@@ -1611,6 +1611,74 @@ function PlayPageClient() {
   };
 
   /**
+   * 检查 File System API 本地下载
+   */
+  const checkFileSystemDownload = async (
+    title: string
+  ): Promise<{ hasLocal: boolean; dirHandle?: FileSystemDirectoryHandle }> => {
+    try {
+      // 从 IndexedDB 读取目录句柄
+      const dbName = 'MoonTVPlus';
+      const storeName = 'dirHandles';
+
+      return new Promise((resolve) => {
+        const request = indexedDB.open(dbName, 1);
+
+        request.onupgradeneeded = (event) => {
+          const db = (event.target as IDBOpenDBRequest).result;
+          if (!db.objectStoreNames.contains(storeName)) {
+            db.createObjectStore(storeName);
+          }
+        };
+
+        request.onsuccess = async (event) => {
+          const db = (event.target as IDBOpenDBRequest).result;
+
+          // 检查 object store 是否存在
+          if (!db.objectStoreNames.contains(storeName)) {
+            db.close();
+            resolve({ hasLocal: false });
+            return;
+          }
+
+          const transaction = db.transaction([storeName], 'readonly');
+          const store = transaction.objectStore(storeName);
+          const getRequest = store.get('downloadDir');
+
+          getRequest.onsuccess = async () => {
+            const dirHandle = getRequest.result as FileSystemDirectoryHandle | undefined;
+            if (!dirHandle) {
+              resolve({ hasLocal: false });
+              return;
+            }
+
+            try {
+              // 检查是否存在 playlist.m3u8 文件
+              await dirHandle.getFileHandle('playlist.m3u8', { create: false });
+              console.log('找到本地下载文件:', title);
+              resolve({ hasLocal: true, dirHandle });
+            } catch (error) {
+              // 文件不存在
+              resolve({ hasLocal: false });
+            }
+          };
+
+          getRequest.onerror = () => {
+            resolve({ hasLocal: false });
+          };
+        };
+
+        request.onerror = () => {
+          resolve({ hasLocal: false });
+        };
+      });
+    } catch (error) {
+      console.error('检查 File System API 下载失败:', error);
+      return { hasLocal: false };
+    }
+  };
+
+  /**
    * 刷新xiaoya链接（静默刷新，不改变videoUrl状态）
    * @param hls HLS实例
    * @param video 视频元素
@@ -1901,17 +1969,43 @@ function PlayPageClient() {
       setVideoQualities([]);
     }
 
-    // 检查是否有本地下载的文件
-    const hasLocalFile = await checkLocalDownload(currentSource, currentId, episodeIndex);
+    // 检查是否有 File System API 本地下载的文件
+    const episodeTitle = detailData?.episodes_titles?.[episodeIndex] || `第${episodeIndex + 1}集`;
+    const fileSystemCheck = await checkFileSystemDownload(episodeTitle);
 
-    if (hasLocalFile) {
-      // 使用本地代理接口,URL以.m3u8结尾以便Artplayer自动识别
-      newUrl = `/api/offline-download/local/${currentSource}/${currentId}/${episodeIndex}/playlist.m3u8`;
-      console.log('使用本地下载文件播放:', newUrl);
-    } else if (sourceProxyMode && newUrl) {
-      // 如果视频源启用了代理模式,且不是本地下载,则通过代理播放
-      newUrl = `/api/proxy/vod/m3u8?url=${encodeURIComponent(newUrl)}&source=${encodeURIComponent(currentSource)}`;
-      console.log('使用代理模式播放:', newUrl);
+    if (fileSystemCheck.hasLocal && fileSystemCheck.dirHandle) {
+      // 使用本地文件播放
+      try {
+        const fileHandle = await fileSystemCheck.dirHandle.getFileHandle('playlist.m3u8', { create: false });
+        const file = await fileHandle.getFile();
+        const content = await file.text();
+
+        // 创建 Blob URL
+        const blob = new Blob([content], { type: 'application/vnd.apple.mpegurl' });
+        newUrl = URL.createObjectURL(blob);
+
+        // 保存目录句柄到 ref，供 HLS loader 使用
+        (window as any).__localFileDirHandle = fileSystemCheck.dirHandle;
+
+        console.log('使用 File System API 本地文件播放:', episodeTitle);
+      } catch (error) {
+        console.error('读取本地文件失败:', error);
+      }
+    }
+
+    // 如果没有 File System API 本地文件，检查服务器端本地下载
+    if (!fileSystemCheck.hasLocal) {
+      const hasLocalFile = await checkLocalDownload(currentSource, currentId, episodeIndex);
+
+      if (hasLocalFile) {
+        // 使用本地代理接口,URL以.m3u8结尾以便Artplayer自动识别
+        newUrl = `/api/offline-download/local/${currentSource}/${currentId}/${episodeIndex}/playlist.m3u8`;
+        console.log('使用服务器端本地下载文件播放:', newUrl);
+      } else if (sourceProxyMode && newUrl) {
+        // 如果视频源启用了代理模式,且不是本地下载,则通过代理播放
+        newUrl = `/api/proxy/vod/m3u8?url=${encodeURIComponent(newUrl)}&source=${encodeURIComponent(currentSource)}`;
+        console.log('使用代理模式播放:', newUrl);
+      }
     }
 
     if (newUrl !== videoUrl) {
@@ -2703,6 +2797,64 @@ function PlayPageClient() {
         .toString()
         .padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
     }
+  };
+
+  // 创建本地文件 HLS loader 的工厂函数
+  const createLocalFileHlsLoader = (HlsLib: any, dirHandle: FileSystemDirectoryHandle) => {
+    return class LocalFileHlsLoader extends HlsLib.DefaultConfig.loader {
+      constructor(config: any) {
+        super(config);
+        const originalLoad = this.load.bind(this);
+
+        this.load = async function (context: any, config: any, callbacks: any) {
+          try {
+            const url = context.url;
+
+            // 提取文件名
+            let filename = '';
+            if (url.includes('blob:')) {
+              // 如果是 blob URL，从 M3U8 内容中提取文件名
+              filename = url.split('/').pop() || '';
+            } else {
+              filename = url.split('/').pop() || '';
+            }
+
+            console.log('尝试加载本地文件:', filename);
+
+            // 从 File System API 读取文件
+            const fileHandle = await dirHandle.getFileHandle(filename, { create: false });
+            const file = await fileHandle.getFile();
+
+            let data: string | ArrayBuffer;
+            if (filename.endsWith('.m3u8')) {
+              data = await file.text();
+            } else {
+              data = await file.arrayBuffer();
+            }
+
+            // 调用成功回调
+            callbacks.onSuccess(
+              {
+                url: url,
+                data: data,
+              },
+              {
+                trequest: performance.now(),
+                tfirst: performance.now(),
+                tload: performance.now(),
+                loaded: file.size,
+                total: file.size,
+              },
+              context
+            );
+          } catch (error) {
+            console.error('加载本地文件失败:', error);
+            // 如果本地文件加载失败，回退到网络加载
+            originalLoad(context, config, callbacks);
+          }
+        };
+      }
+    };
   };
 
   // 创建自定义 HLS loader 的工厂函数
@@ -4899,6 +5051,9 @@ function PlayPageClient() {
             // 每次创建HLS实例时，都读取最新的blockAdEnabled状态
             const shouldUseCustomLoader = blockAdEnabledRef.current;
 
+            // 检查是否有本地文件目录句柄
+            const localFileDirHandle = (window as any).__localFileDirHandle as FileSystemDirectoryHandle | undefined;
+
             // 从localStorage读取缓冲策略
             const bufferStrategy = typeof window !== 'undefined'
               ? localStorage.getItem('bufferStrategy') || 'medium'
@@ -4942,6 +5097,21 @@ function PlayPageClient() {
 
             const bufferConfig = getBufferConfig(bufferStrategy);
 
+            // 选择合适的 Loader
+            let loaderClass;
+            if (localFileDirHandle) {
+              // 使用本地文件 Loader
+              const LocalFileHlsLoader = createLocalFileHlsLoader(Hls, localFileDirHandle);
+              loaderClass = LocalFileHlsLoader;
+              console.log('使用本地文件 HLS Loader');
+            } else if (shouldUseCustomLoader) {
+              // 使用自定义广告过滤 Loader
+              loaderClass = CustomHlsJsLoader;
+            } else {
+              // 使用默认 Loader
+              loaderClass = Hls.DefaultConfig.loader;
+            }
+
             const hls = new Hls({
               debug: false, // 关闭日志
               enableWorker: true, // WebWorker 解码，降低主线程压力
@@ -4953,9 +5123,7 @@ function PlayPageClient() {
               maxBufferSize: bufferConfig.maxBufferSize, // 最大缓冲大小
 
               /* 自定义loader */
-              loader: (shouldUseCustomLoader
-                ? CustomHlsJsLoader
-                : Hls.DefaultConfig.loader) as any,
+              loader: loaderClass as any,
             });
 
             hls.loadSource(url);

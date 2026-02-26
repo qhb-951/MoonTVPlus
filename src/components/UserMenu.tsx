@@ -131,6 +131,8 @@ export const UserMenu: React.FC = () => {
   const [exactSearch, setExactSearch] = useState(true);
   const [maxConcurrentDownloads, setMaxConcurrentDownloads] = useState(6);
   const [downloadThreadsPerTask, setDownloadThreadsPerTask] = useState(6);
+  const [downloadMode, setDownloadMode] = useState<'browser' | 'filesystem'>('browser');
+  const [filesystemSavePath, setFilesystemSavePath] = useState<string>('');
 
   // 邮件通知设置
   const [userEmail, setUserEmail] = useState('');
@@ -570,6 +572,18 @@ export const UserMenu: React.FC = () => {
       if (savedDownloadThreadsPerTask !== null) {
         setDownloadThreadsPerTask(Number(savedDownloadThreadsPerTask));
       }
+
+      // 加载下载模式设置
+      const savedDownloadMode = localStorage.getItem('downloadMode');
+      if (savedDownloadMode === 'browser' || savedDownloadMode === 'filesystem') {
+        setDownloadMode(savedDownloadMode);
+      }
+
+      // 加载保存路径设置
+      const savedFilesystemSavePath = localStorage.getItem('filesystemSavePath');
+      if (savedFilesystemSavePath !== null) {
+        setFilesystemSavePath(savedFilesystemSavePath);
+      }
     }
   }, []);
 
@@ -929,6 +943,59 @@ export const UserMenu: React.FC = () => {
     setDownloadThreadsPerTask(value);
     if (typeof window !== 'undefined') {
       localStorage.setItem('downloadThreadsPerTask', String(value));
+    }
+  };
+
+  const handleDownloadModeChange = (mode: 'browser' | 'filesystem') => {
+    // 如果选择 filesystem 模式，先检测浏览器是否支持
+    if (mode === 'filesystem' && typeof window !== 'undefined' && !('showDirectoryPicker' in window)) {
+      setConfirmDialog({
+        isOpen: true,
+        title: '浏览器不支持',
+        message: '您的浏览器不支持 File System Access API，请使用 Chrome 86+ 或 Edge 86+',
+        onConfirm: () => {
+          setConfirmDialog({ ...confirmDialog, isOpen: false });
+        },
+      });
+      return;
+    }
+
+    setDownloadMode(mode);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('downloadMode', mode);
+    }
+  };
+
+  const handleSelectSavePath = async () => {
+    try {
+      const dirHandle = await (window as any).showDirectoryPicker();
+      setFilesystemSavePath(dirHandle.name);
+      localStorage.setItem('filesystemSavePath', dirHandle.name);
+
+      // 保存目录句柄到 IndexedDB
+      const dbName = 'MoonTVPlus';
+      const storeName = 'dirHandles';
+      const request = indexedDB.open(dbName, 1);
+
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains(storeName)) {
+          db.createObjectStore(storeName);
+        }
+      };
+
+      request.onsuccess = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        const transaction = db.transaction([storeName], 'readwrite');
+        const store = transaction.objectStore(storeName);
+        store.put(dirHandle, 'downloadDir');
+      };
+
+      request.onerror = () => {
+        console.error('无法打开 IndexedDB');
+      };
+    } catch (err) {
+      console.error('用户取消选择目录', err);
     }
   };
 
@@ -2197,6 +2264,70 @@ export const UserMenu: React.FC = () => {
                         32个
                       </button>
                     </div>
+                  </div>
+
+                  {/* 下载模式 */}
+                  <div className='space-y-2'>
+                    <div>
+                      <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
+                        下载模式
+                      </h4>
+                    </div>
+                    <div className='space-y-2'>
+                      <label className='flex items-center gap-2 cursor-pointer'>
+                        <input
+                          type='radio'
+                          name='downloadMode'
+                          value='browser'
+                          checked={downloadMode === 'browser'}
+                          onChange={() => handleDownloadModeChange('browser')}
+                          className='w-4 h-4 text-green-500'
+                        />
+                        <span className='text-sm text-gray-700 dark:text-gray-300'>
+                          浏览器下载（合并为单文件）
+                        </span>
+                      </label>
+                      <label className='flex items-center gap-2 cursor-pointer'>
+                        <input
+                          type='radio'
+                          name='downloadMode'
+                          value='filesystem'
+                          checked={downloadMode === 'filesystem'}
+                          onChange={() => handleDownloadModeChange('filesystem')}
+                          className='w-4 h-4 text-green-500'
+                        />
+                        <span className='text-sm text-gray-700 dark:text-gray-300'>
+                          File System API（保存分片到本地目录）
+                        </span>
+                      </label>
+                    </div>
+
+                    {/* 保存路径选择（仅在 filesystem 模式显示） */}
+                    {downloadMode === 'filesystem' && (
+                      <div className='mt-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg space-y-2'>
+                        <label className='block text-xs font-medium text-gray-700 dark:text-gray-300'>
+                          保存路径
+                        </label>
+                        <div className='flex gap-2'>
+                          <input
+                            type='text'
+                            value={filesystemSavePath}
+                            readOnly
+                            placeholder='点击选择保存目录'
+                            className='flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+                          />
+                          <button
+                            onClick={handleSelectSavePath}
+                            className='px-4 py-2 text-sm bg-green-500 text-white rounded hover:bg-green-600 transition-colors'
+                          >
+                            选择目录
+                          </button>
+                        </div>
+                        <p className='text-xs text-gray-500 dark:text-gray-400'>
+                          需要 Chrome 86+ 或 Edge 86+ 浏览器支持
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

@@ -43,6 +43,10 @@ export interface M3U8DownloadTask {
     key: ArrayBuffer | null;
     decryption: AESDecryptor | null;
   };
+  // File System API 相关字段
+  downloadMode?: 'browser' | 'filesystem';
+  filesystemDirHandle?: FileSystemDirectoryHandle;
+  m3u8Content?: string; // 原始 M3U8 内容，用于生成本地播放列表
 }
 
 export interface M3U8DownloaderOptions {
@@ -132,6 +136,7 @@ export class M3U8Downloader {
         key: null,
         decryption: null,
       },
+      m3u8Content, // 保存原始 M3U8 内容
     };
 
     // 解析 TS 片段
@@ -378,7 +383,67 @@ export class M3U8Downloader {
     // MP4 转码（如果需要）
     if (task.type === 'MP4') {
       this.conversionMp4(task, data, index, (convertedData) => {
-        task.mediaFileList[index - task.rangeDownload.startSegment + 1] = convertedData;
+        if (task.downloadMode === 'filesystem') {
+          // File System API 模式：保存分片到文件系统
+          this.saveSegmentToFilesystem(task, convertedData, index).then(() => {
+            task.finishList[index].status = 'is-success';
+            task.finishNum++;
+            this.options.onProgress?.(task);
+
+            if (task.finishNum === task.rangeDownload.targetSegment) {
+              task.status = 'done';
+              this.generateLocalPlaylist(task);
+              this.options.onComplete?.(task);
+            }
+
+            callback();
+          }).catch((error) => {
+            console.error('保存分片失败:', error);
+            task.finishList[index].status = 'is-error';
+            task.errorNum++;
+            callback();
+          });
+        } else {
+          // 浏览器下载模式：保存到内存
+          task.mediaFileList[index - task.rangeDownload.startSegment + 1] = convertedData;
+          task.finishList[index].status = 'is-success';
+          task.finishNum++;
+
+          this.options.onProgress?.(task);
+
+          if (task.finishNum === task.rangeDownload.targetSegment) {
+            task.status = 'done';
+            this.downloadFile(task);
+            this.options.onComplete?.(task);
+          }
+
+          callback();
+        }
+      });
+    } else {
+      if (task.downloadMode === 'filesystem') {
+        // File System API 模式：保存分片到文件系统
+        this.saveSegmentToFilesystem(task, data, index).then(() => {
+          task.finishList[index].status = 'is-success';
+          task.finishNum++;
+          this.options.onProgress?.(task);
+
+          if (task.finishNum === task.rangeDownload.targetSegment) {
+            task.status = 'done';
+            this.generateLocalPlaylist(task);
+            this.options.onComplete?.(task);
+          }
+
+          callback();
+        }).catch((error) => {
+          console.error('保存分片失败:', error);
+          task.finishList[index].status = 'is-error';
+          task.errorNum++;
+          callback();
+        });
+      } else {
+        // 浏览器下载模式：保存到内存
+        task.mediaFileList[index - task.rangeDownload.startSegment + 1] = data;
         task.finishList[index].status = 'is-success';
         task.finishNum++;
 
@@ -391,21 +456,7 @@ export class M3U8Downloader {
         }
 
         callback();
-      });
-    } else {
-      task.mediaFileList[index - task.rangeDownload.startSegment + 1] = data;
-      task.finishList[index].status = 'is-success';
-      task.finishNum++;
-
-      this.options.onProgress?.(task);
-
-      if (task.finishNum === task.rangeDownload.targetSegment) {
-        task.status = 'done';
-        this.downloadFile(task);
-        this.options.onComplete?.(task);
       }
-
-      callback();
     }
   }
 
@@ -648,5 +699,112 @@ export class M3U8Downloader {
       }
     });
     task.requests = [];
+  }
+
+  /**
+   * 保存分片到文件系统
+   */
+  private async saveSegmentToFilesystem(
+    task: M3U8DownloadTask,
+    data: ArrayBuffer,
+    index: number
+  ): Promise<void> {
+    if (!task.filesystemDirHandle) {
+      throw new Error('未选择保存目录');
+    }
+
+    const filename = `segment_${index.toString().padStart(5, '0')}.ts`;
+
+    try {
+      const fileHandle = await task.filesystemDirHandle.getFileHandle(filename, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(data);
+      await writable.close();
+    } catch (error) {
+      console.error(`保存分片 ${filename} 失败:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 生成本地 M3U8 播放列表
+   */
+  private async generateLocalPlaylist(task: M3U8DownloadTask): Promise<void> {
+    if (!task.filesystemDirHandle || !task.m3u8Content) {
+      console.error('无法生成播放列表：缺少目录句柄或 M3U8 内容');
+      return;
+    }
+
+    try {
+      const lines = task.m3u8Content.split('\n');
+      const modifiedLines: string[] = [];
+      let segmentIndex = task.rangeDownload.startSegment;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmedLine = line.trim();
+
+        // 替换加密密钥 URI
+        if (trimmedLine.startsWith('#EXT-X-KEY:')) {
+          if (task.aesConf.method && task.aesConf.method !== 'NONE') {
+            // 如果有加密，保存密钥文件
+            if (task.aesConf.key) {
+              await this.saveKeyToFilesystem(task, task.aesConf.key);
+            }
+            const modifiedLine = line.replace(/URI="[^"]+"/g, 'URI="key.key"');
+            modifiedLines.push(modifiedLine);
+          } else {
+            modifiedLines.push(line);
+          }
+        }
+        // 替换视频片段 URL
+        else if (trimmedLine && !trimmedLine.startsWith('#')) {
+          if (segmentIndex >= task.rangeDownload.startSegment && segmentIndex < task.rangeDownload.endSegment) {
+            const indent = line.match(/^\s*/)?.[0] || '';
+            const filename = `segment_${segmentIndex.toString().padStart(5, '0')}.ts`;
+            modifiedLines.push(indent + filename);
+            segmentIndex++;
+          } else {
+            modifiedLines.push(line);
+          }
+        }
+        // 保持其他所有行不变
+        else {
+          modifiedLines.push(line);
+        }
+      }
+
+      // 保存播放列表
+      const playlistContent = modifiedLines.join('\n');
+      const fileHandle = await task.filesystemDirHandle.getFileHandle('playlist.m3u8', { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(playlistContent);
+      await writable.close();
+
+      console.log('本地播放列表生成成功');
+    } catch (error) {
+      console.error('生成播放列表失败:', error);
+    }
+  }
+
+  /**
+   * 保存加密密钥到文件系统
+   */
+  private async saveKeyToFilesystem(
+    task: M3U8DownloadTask,
+    keyData: ArrayBuffer
+  ): Promise<void> {
+    if (!task.filesystemDirHandle) {
+      return;
+    }
+
+    try {
+      const fileHandle = await task.filesystemDirHandle.getFileHandle('key.key', { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(keyData);
+      await writable.close();
+    } catch (error) {
+      console.error('保存密钥失败:', error);
+    }
   }
 }

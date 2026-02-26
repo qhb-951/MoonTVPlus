@@ -65,6 +65,59 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
   const addDownloadTask = useCallback(async (url: string, title: string, type: 'TS' | 'MP4' = 'TS') => {
     try {
       const taskId = await downloader.createTask(url, title, type);
+
+      // 读取下载模式设置
+      const downloadMode = typeof window !== 'undefined'
+        ? (localStorage.getItem('downloadMode') as 'browser' | 'filesystem') || 'browser'
+        : 'browser';
+
+      // 如果是 filesystem 模式，从 IndexedDB 读取目录句柄
+      if (downloadMode === 'filesystem' && typeof window !== 'undefined') {
+        try {
+          const dbName = 'MoonTVPlus';
+          const storeName = 'dirHandles';
+          const request = indexedDB.open(dbName, 1);
+
+          request.onupgradeneeded = (event) => {
+            const db = (event.target as IDBOpenDBRequest).result;
+            if (!db.objectStoreNames.contains(storeName)) {
+              db.createObjectStore(storeName);
+            }
+          };
+
+          request.onsuccess = (event) => {
+            const db = (event.target as IDBOpenDBRequest).result;
+
+            // 检查 object store 是否存在
+            if (!db.objectStoreNames.contains(storeName)) {
+              console.warn('Object store 不存在，跳过读取');
+              db.close();
+              return;
+            }
+
+            const transaction = db.transaction([storeName], 'readonly');
+            const store = transaction.objectStore(storeName);
+            const getRequest = store.get('downloadDir');
+
+            getRequest.onsuccess = () => {
+              const dirHandle = getRequest.result as FileSystemDirectoryHandle | undefined;
+              if (dirHandle) {
+                // 更新任务的下载模式和目录句柄
+                const task = downloader.getTask(taskId);
+                if (task) {
+                  task.downloadMode = 'filesystem';
+                  task.filesystemDirHandle = dirHandle;
+                }
+              } else {
+                console.warn('未找到保存目录，使用浏览器下载模式');
+              }
+            };
+          };
+        } catch (error) {
+          console.error('读取目录句柄失败:', error);
+        }
+      }
+
       setTasks(downloader.getAllTasks());
 
       // 从localStorage读取最大同时下载限制，默认6个
