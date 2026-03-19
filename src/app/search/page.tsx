@@ -460,82 +460,181 @@ function SearchPageClient() {
 
   // 构建筛选选项
   const filterOptions = useMemo(() => {
-    const sourcesSet = new Map<string, string>();
-    const titlesSet = new Set<string>();
-    const yearsSet = new Set<string>();
+    const exactSearchFiltered = exactSearch
+      ? searchResults.filter((item) =>
+          titleContainsQuery(item.title, currentQueryRef.current)
+        )
+      : searchResults;
 
-    searchResults.forEach((item) => {
-      if (
-        item.source &&
-        item.source_name &&
-        item.source.trim() !== '' &&
-        item.source_name.trim() !== ''
-      ) {
-        sourcesSet.set(item.source, item.source_name);
-      }
-      if (item.title && item.title.trim() !== '') titlesSet.add(item.title);
-      if (item.year && item.year.trim() !== '') yearsSet.add(item.year);
-    });
-
-    const sourceOptions: { label: string; value: string }[] = [
+    const buildSourceOptions = (
+      sourceEntries: Array<{ source: string; source_name: string }>
+    ) => [
       { label: '全部来源', value: 'all' },
-      ...Array.from(sourcesSet.entries())
+      ...Array.from(
+        new Map(
+          sourceEntries
+            .filter(
+              (item) =>
+                item.source &&
+                item.source_name &&
+                item.source.trim() !== '' &&
+                item.source_name.trim() !== ''
+            )
+            .map((item) => [item.source, item.source_name])
+        ).entries()
+      )
         .sort((a, b) => {
-          // 判断是否为 openlist
           const aIsOpenList = a[0] === 'openlist';
           const bIsOpenList = b[0] === 'openlist';
-
-          // 判断是否为 emby 源（包括 emby 和 emby_xxx 格式）
           const aIsEmby = a[0] === 'emby' || a[0].startsWith('emby_');
           const bIsEmby = b[0] === 'emby' || b[0].startsWith('emby_');
 
-          // 优先级：OpenList(100) > Emby(90) > 其他(0)
           const aPriority = aIsOpenList ? 100 : aIsEmby ? 90 : 0;
           const bPriority = bIsOpenList ? 100 : bIsEmby ? 90 : 0;
 
           if (aPriority !== bPriority) {
-            return bPriority - aPriority; // 降序排列
+            return bPriority - aPriority;
           }
 
-          // 同优先级内按名称排序
           return a[1].localeCompare(b[1]);
         })
         .map(([value, label]) => ({ label, value })),
     ];
 
-    const titleOptions: { label: string; value: string }[] = [
+    const buildTitleOptions = (titles: string[]) => [
       { label: '全部标题', value: 'all' },
-      ...Array.from(titlesSet.values())
+      ...Array.from(new Set(titles))
+        .filter((title) => title && title.trim() !== '')
         .sort((a, b) => a.localeCompare(b))
-        .map((t) => ({ label: t, value: t })),
+        .map((title) => ({ label: title, value: title })),
     ];
 
-    // 年份: 将 unknown 放末尾
-    const years = Array.from(yearsSet.values());
-    const knownYears = years
-      .filter((y) => y !== 'unknown')
-      .sort((a, b) => parseInt(b) - parseInt(a));
-    const hasUnknown = years.includes('unknown');
-    const yearOptions: { label: string; value: string }[] = [
-      { label: '全部年份', value: 'all' },
-      ...knownYears.map((y) => ({ label: y, value: y })),
-      ...(hasUnknown ? [{ label: '未知', value: 'unknown' }] : []),
-    ];
+    const buildYearOptions = (years: string[]) => {
+      const yearSet = Array.from(
+        new Set(years.filter((year) => year && year.trim() !== ''))
+      );
+      const knownYears = yearSet
+        .filter((year) => year !== 'unknown')
+        .sort((a, b) => parseInt(b) - parseInt(a));
+      const hasUnknown = yearSet.includes('unknown');
+
+      return [
+        { label: '全部年份', value: 'all' },
+        ...knownYears.map((year) => ({ label: year, value: year })),
+        ...(hasUnknown ? [{ label: '未知', value: 'unknown' }] : []),
+      ];
+    };
+
+    const allForSourceOptions = exactSearchFiltered.filter((item) => {
+      if (filterAll.title !== 'all' && item.title !== filterAll.title)
+        return false;
+      if (filterAll.year !== 'all' && item.year !== filterAll.year)
+        return false;
+      return true;
+    });
+
+    const allForTitleOptions = exactSearchFiltered.filter((item) => {
+      if (filterAll.source !== 'all' && item.source !== filterAll.source)
+        return false;
+      if (filterAll.year !== 'all' && item.year !== filterAll.year)
+        return false;
+      return true;
+    });
+
+    const allForYearOptions = exactSearchFiltered.filter((item) => {
+      if (filterAll.source !== 'all' && item.source !== filterAll.source)
+        return false;
+      if (filterAll.title !== 'all' && item.title !== filterAll.title)
+        return false;
+      return true;
+    });
+
+    const aggForSourceOptions = aggregatedResults.filter(([_, group]) => {
+      const gTitle = group[0]?.title ?? '';
+      const gYear = group[0]?.year ?? 'unknown';
+      if (filterAgg.title !== 'all' && gTitle !== filterAgg.title) return false;
+      if (filterAgg.year !== 'all' && gYear !== filterAgg.year) return false;
+      return true;
+    });
+
+    const aggForTitleOptions = aggregatedResults.filter(([_, group]) => {
+      const gYear = group[0]?.year ?? 'unknown';
+      const hasSource =
+        filterAgg.source === 'all'
+          ? true
+          : group.some((item) => item.source === filterAgg.source);
+      if (!hasSource) return false;
+      if (filterAgg.year !== 'all' && gYear !== filterAgg.year) return false;
+      return true;
+    });
+
+    const aggForYearOptions = aggregatedResults.filter(([_, group]) => {
+      const gTitle = group[0]?.title ?? '';
+      const hasSource =
+        filterAgg.source === 'all'
+          ? true
+          : group.some((item) => item.source === filterAgg.source);
+      if (!hasSource) return false;
+      if (filterAgg.title !== 'all' && gTitle !== filterAgg.title) return false;
+      return true;
+    });
 
     const categoriesAll: SearchFilterCategory[] = [
-      { key: 'source', label: '来源', options: sourceOptions },
-      { key: 'title', label: '标题', options: titleOptions },
-      { key: 'year', label: '年份', options: yearOptions },
+      {
+        key: 'source',
+        label: '来源',
+        options: buildSourceOptions(
+          allForSourceOptions.map((item) => ({
+            source: item.source,
+            source_name: item.source_name,
+          }))
+        ),
+      },
+      {
+        key: 'title',
+        label: '标题',
+        options: buildTitleOptions(
+          allForTitleOptions.map((item) => item.title)
+        ),
+      },
+      {
+        key: 'year',
+        label: '年份',
+        options: buildYearOptions(allForYearOptions.map((item) => item.year)),
+      },
     ];
 
     const categoriesAgg: SearchFilterCategory[] = [
-      { key: 'source', label: '来源', options: sourceOptions },
-      { key: 'title', label: '标题', options: titleOptions },
-      { key: 'year', label: '年份', options: yearOptions },
+      {
+        key: 'source',
+        label: '来源',
+        options: buildSourceOptions(
+          aggForSourceOptions.flatMap(([_, group]) =>
+            group.map((item) => ({
+              source: item.source,
+              source_name: item.source_name,
+            }))
+          )
+        ),
+      },
+      {
+        key: 'title',
+        label: '标题',
+        options: buildTitleOptions(
+          aggForTitleOptions.map(([_, group]) => group[0]?.title ?? '')
+        ),
+      },
+      {
+        key: 'year',
+        label: '年份',
+        options: buildYearOptions(
+          aggForYearOptions.map(([_, group]) => group[0]?.year ?? 'unknown')
+        ),
+      },
     ];
 
     return { categoriesAll, categoriesAgg };
-  }, [searchResults]);
+  }, [searchResults, aggregatedResults, exactSearch, filterAll, filterAgg]);
 
   // 非聚合：应用筛选与排序
   const filteredAllResults = useMemo(() => {
