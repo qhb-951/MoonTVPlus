@@ -14,7 +14,7 @@ const _nodeRequire = eval('require') as NodeRequire;
 
 // ---- 内存缓存 ----
 let _registryCache: { data: SourceScriptRegistry; ts: number } | null = null;
-const REGISTRY_CACHE_TTL_MS = 5_000;
+const REGISTRY_CACHE_TTL_MS = 4 * 60 * 60 * 1000;
 
 const _compiledCache = new Map<string, any>();
 const MAX_COMPILED_CACHE_SIZE = 50;
