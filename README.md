@@ -232,6 +232,26 @@ volumes:
   kvrocks-data:
 ```
 
+### SQLite 存储
+
+```yml
+services:
+  moontv-core:
+    image: ghcr.io/mtvpls/moontvplus:latest
+    container_name: moontv-core
+    restart: on-failure
+    ports:
+      - '3000:3000'
+    environment:
+      - USERNAME=admin
+      - PASSWORD=admin_password
+      - NEXT_PUBLIC_STORAGE_TYPE=d1
+      - SQLITE_DB_PATH=/app/.data/moontv.db
+    volumes:
+      - ./data:/app/.data
+```
+
+
 ### Redis 存储（有一定的丢数据风险）
 
 ```yml
@@ -289,7 +309,7 @@ services:
 
 #### Lite 镜像说明
 
-`ghcr.io/mtvpls/moontvplus-lite:latest` 为更小的镜像，但不支持启动内置观影室服务。
+`ghcr.io/mtvpls/moontvplus-lite:latest` 为更小的镜像，但不支持启动内置观影室服务，也不支持 SQLite（`NEXT_PUBLIC_STORAGE_TYPE=d1`）自动初始化方案。
 
 示例：
 

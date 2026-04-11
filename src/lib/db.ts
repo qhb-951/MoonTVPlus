@@ -110,12 +110,15 @@ function getD1Adapter(): any {
   const Database = require('better-sqlite3');
   const path = require('path');
 
-  const dbPath = path.join(process.cwd(), '.data', 'moontv.db');
+  const dbPath =
+    process.env.SQLITE_DB_PATH || path.join(process.cwd(), '.data', 'moontv.db');
 
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL'); // 启用 WAL 模式提升性能
+  db.pragma('foreign_keys = ON'); // 与 D1 保持一致，启用外键约束
+  db.pragma('busy_timeout = 5000'); // 避免启动阶段或并发写入时立即锁失败
 
-  console.log('Using SQLite database (development mode)');
+  console.log('Using SQLite database (non-Cloudflare mode)');
   console.log('Database location:', dbPath);
 
   return new SQLiteAdapter(db);
