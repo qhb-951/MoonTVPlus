@@ -962,40 +962,6 @@ function SearchPageClient() {
   }, [activeTab]);
 
   useEffect(() => {
-    // 从 URL 读取搜索类型参数
-    const typeParam = searchParams.get('type');
-    const query = searchParams.get('q');
-
-    if (
-      (typeParam === 'pansou' && netdiskSearchEnabled) ||
-      (typeParam === 'acg' && magnetSearchEnabled)
-    ) {
-      setActiveTab(typeParam);
-
-      // 如果有搜索关键词且显示结果，触发对应的搜索
-      if (query && query.trim()) {
-        setSearchQuery(query);
-        setShowResults(true);
-
-        // 延迟触发搜索，确保组件已经切换到正确的标签页
-        setTimeout(() => {
-          if (typeParam === 'pansou') {
-            setTriggerPansouSearch((prev) => !prev);
-          } else if (typeParam === 'acg') {
-            setTriggerAcgSearch((prev) => !prev);
-          }
-        }, 100);
-      }
-    } else if (typeParam === 'video') {
-      setActiveTab('video');
-    } else if (!typeParam && query) {
-      // 如果没有 type 参数但有查询，默认为 video
-      setActiveTab('video');
-    }
-
-    // 无搜索参数时聚焦搜索框
-    !searchParams.get('q') && document.getElementById('searchInput')?.focus();
-
     // 获取用户权限
     const authInfo = getAuthInfoFromBrowserCookie();
     setUserRole(authInfo?.role || null);
@@ -1094,6 +1060,31 @@ function SearchPageClient() {
       document.body.removeEventListener('scroll', handleScroll);
     };
   }, []);
+
+  useEffect(() => {
+    const typeParam = searchParams.get('type');
+    const query = searchParams.get('q');
+
+    if (typeParam === 'pansou') {
+      if (netdiskSearchEnabled) {
+        setActiveTab('pansou');
+      } else {
+        setActiveTab('video');
+      }
+    } else if (typeParam === 'acg') {
+      if (magnetSearchEnabled) {
+        setActiveTab('acg');
+      } else {
+        setActiveTab('video');
+      }
+    } else {
+      setActiveTab('video');
+    }
+
+    if (!query) {
+      document.getElementById('searchInput')?.focus();
+    }
+  }, [searchParams, netdiskSearchEnabled, magnetSearchEnabled]);
 
   useEffect(() => {
     // 等待转换器初始化完成
@@ -1348,7 +1339,27 @@ function SearchPageClient() {
       setShowResults(false);
       setShowSuggestions(false);
     }
-  }, [searchParams, forceRefresh, converterReady, netdiskSearchEnabled, magnetSearchEnabled]);
+  }, [searchParams, forceRefresh, converterReady]);
+
+  useEffect(() => {
+    const typeParam = searchParams.get('type');
+    const query = searchParams.get('q');
+    if (!query || !query.trim()) return;
+
+    if (typeParam === 'pansou' && netdiskSearchEnabled) {
+      setSearchQuery(query);
+      setShowResults(true);
+      setTimeout(() => {
+        setTriggerPansouSearch((prev) => !prev);
+      }, 100);
+    } else if (typeParam === 'acg' && magnetSearchEnabled) {
+      setSearchQuery(query);
+      setShowResults(true);
+      setTimeout(() => {
+        setTriggerAcgSearch((prev) => !prev);
+      }, 100);
+    }
+  }, [searchParams, netdiskSearchEnabled, magnetSearchEnabled]);
 
   // 组件卸载时，关闭可能存在的连接
   useEffect(() => {
@@ -1553,8 +1564,9 @@ function SearchPageClient() {
                   setSearchQuery(trimmed);
                   setShowResults(true);
                   setShowSuggestions(false);
-
-                  router.push(`/search?q=${encodeURIComponent(trimmed)}`);
+                  router.push(
+                    `/search?q=${encodeURIComponent(trimmed)}&type=${activeTab}`
+                  );
                 }}
               />
             </div>

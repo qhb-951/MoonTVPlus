@@ -7,6 +7,13 @@ import { getAvailableApiSites, getCacheTime, getConfig } from '@/lib/config';
 import { getDetailFromApiV2 } from '@/lib/downstream';
 import { getProxyToken } from '@/lib/emby-token';
 import {
+  createMobileNetdiskSession,
+  getMobileNetdiskSession,
+  parseMobileNetdiskId,
+  refreshMobileNetdiskSession,
+} from '@/lib/netdisk/mobile-session-cache';
+import { LEGACY_QUARK_TEMP_SOURCE, NETDISK_MOBILE_SOURCE, NETDISK_QUARK_SOURCE, normalizeNetdiskSource } from '@/lib/netdisk/source';
+import {
   executeSavedSourceScript,
   normalizeScriptDetailResult,
   normalizeScriptSources,
@@ -27,7 +34,7 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
   const id = searchParams.get('id');
-  const sourceCode = searchParams.get('source');
+  const sourceCode = normalizeNetdiskSource(searchParams.get('source'));
   const fileName = searchParams.get('fileName'); // 小雅源：用户点击的文件名
   const title = searchParams.get('title');
 
@@ -275,7 +282,79 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  if (sourceCode === 'quark-temp') {
+  if (sourceCode === NETDISK_MOBILE_SOURCE) {
+    try {
+      const config = await getConfig();
+      const mobileConfig = config.NetDiskConfig?.Mobile;
+      if (!mobileConfig?.Enabled || !mobileConfig.Authorization) {
+        throw new Error('移动云盘未配置或未启用');
+      }
+
+      let session = refreshMobileNetdiskSession(id) || getMobileNetdiskSession(id);
+      if (!session) {
+        const payload = parseMobileNetdiskId(id);
+        const { listMobileShareVideos } = await import('@/lib/netdisk/mobile.client');
+        const result = await listMobileShareVideos(payload.shareUrl, mobileConfig.Authorization);
+        session = createMobileNetdiskSession({
+          title: title || result.title,
+          shareUrl: payload.shareUrl,
+          passcode: payload.passcode,
+          files: result.files,
+        });
+      }
+      if (!session) {
+        throw new Error('移动云盘播放信息恢复失败');
+      }
+      const mobileSession = session;
+      const { parseVideoFileName } = await import('@/lib/video-parser');
+      const parsedFiles = mobileSession.files.map((file, index) => {
+        const parsed = parseVideoFileName(file.name);
+        return {
+          ...file,
+          originalIndex: index,
+          sortEpisode: parsed.episode || index + 1,
+          isOVA: parsed.isOVA,
+          displayTitle:
+            parsed.title ||
+            (parsed.episode ? `第${parsed.episode}集` : file.name),
+        };
+      }).sort((a, b) => {
+        if (a.isOVA && !b.isOVA) return 1;
+        if (!a.isOVA && b.isOVA) return -1;
+        return a.sortEpisode !== b.sortEpisode
+          ? a.sortEpisode - b.sortEpisode
+          : a.name.localeCompare(b.name, 'zh-Hans-CN', {
+              numeric: true,
+              sensitivity: 'base',
+            });
+      });
+
+      const episodes = parsedFiles.map((file) => (
+        `/api/netdisk/mobile/play?id=${encodeURIComponent(mobileSession.id)}&episodeIndex=${file.originalIndex}`
+      ));
+
+      return NextResponse.json({
+        source: NETDISK_MOBILE_SOURCE,
+        source_name: '移动云盘',
+        id: mobileSession.id,
+        title: title || mobileSession.title,
+        poster: '',
+        year: '',
+        douban_id: 0,
+        desc: `移动云盘分享：${mobileSession.shareUrl}`,
+        episodes,
+        episodes_titles: parsedFiles.map((file) => file.displayTitle),
+        proxyMode: false,
+      });
+    } catch (error) {
+      return NextResponse.json(
+        { error: (error as Error).message },
+        { status: 500 }
+      );
+    }
+  }
+
+  if (sourceCode === NETDISK_QUARK_SOURCE || sourceCode === LEGACY_QUARK_TEMP_SOURCE) {
     try {
       const config = await getConfig();
       const openListConfig = config.OpenListConfig;
@@ -390,7 +469,7 @@ export async function GET(request: NextRequest) {
         });
 
       return NextResponse.json({
-        source: 'quark-temp',
+        source: NETDISK_QUARK_SOURCE,
         source_name: '夸克临时播放',
         id,
         title: title || folderPath.split('/').filter(Boolean).pop() || '夸克临时播放',

@@ -672,6 +672,10 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
         PlayTempSavePath: '/',
         OpenListTempPath: '/',
       },
+      Mobile: {
+        Enabled: false,
+        Authorization: '',
+      },
     };
   }
 
@@ -682,6 +686,13 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
       SavePath: '/',
       PlayTempSavePath: '/',
       OpenListTempPath: '/',
+    };
+  }
+
+  if (!adminConfig.NetDiskConfig.Mobile) {
+    adminConfig.NetDiskConfig.Mobile = {
+      Enabled: false,
+      Authorization: '',
     };
   }
 

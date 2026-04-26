@@ -6,6 +6,10 @@ import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getConfig, setCachedConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 import {
+  assertMobileAuthorizationHeaderSafe,
+  normalizeMobileAuthorization,
+} from '@/lib/netdisk/mobile.client';
+import {
   assertQuarkCookieHeaderSafe,
   normalizeQuarkCookie,
   validateQuarkCookieReadable,
@@ -40,11 +44,14 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { action, Quark } = body;
+    const { action, Quark, Mobile, provider } = body;
     const adminConfig = await getConfig();
 
     if (action === 'save') {
       const normalizedCookie = Quark?.Cookie ? assertQuarkCookieHeaderSafe(Quark.Cookie) : '';
+      const normalizedMobileAuthorization = Mobile?.Authorization
+        ? assertMobileAuthorizationHeaderSafe(Mobile.Authorization)
+        : '';
 
       adminConfig.NetDiskConfig = adminConfig.NetDiskConfig || {};
       adminConfig.NetDiskConfig.Quark = {
@@ -54,6 +61,10 @@ export async function POST(request: NextRequest) {
         PlayTempSavePath: Quark?.PlayTempSavePath || '/',
         OpenListTempPath: Quark?.OpenListTempPath || '/',
       };
+      adminConfig.NetDiskConfig.Mobile = {
+        Enabled: Boolean(Mobile?.Enabled),
+        Authorization: normalizedMobileAuthorization,
+      };
 
       await db.saveAdminConfig(adminConfig);
       await setCachedConfig(adminConfig);
@@ -62,10 +73,21 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'validate') {
+      if (provider === 'mobile') {
+        if (!Mobile?.Authorization) {
+          return NextResponse.json({ error: '请先填写移动云盘 Authorization' }, { status: 400 });
+        }
+
+        normalizeMobileAuthorization(Mobile.Authorization);
+        return NextResponse.json({
+          success: true,
+          message: '移动云盘 Authorization 格式正常',
+        });
+      }
+
       if (!Quark?.Cookie) {
         return NextResponse.json({ error: '请先填写夸克 Cookie' }, { status: 400 });
       }
-
       await validateQuarkCookieReadable(normalizeQuarkCookie(Quark.Cookie));
 
       return NextResponse.json({

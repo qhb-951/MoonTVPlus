@@ -3706,14 +3706,19 @@ const NetDiskConfigComponent = ({
   const [savePath, setSavePath] = useState('/');
   const [playTempSavePath, setPlayTempSavePath] = useState('/');
   const [openListTempPath, setOpenListTempPath] = useState('/');
+  const [mobileEnabled, setMobileEnabled] = useState(false);
+  const [mobileAuthorization, setMobileAuthorization] = useState('');
 
   useEffect(() => {
     const quark = config?.NetDiskConfig?.Quark;
+    const mobile = config?.NetDiskConfig?.Mobile;
     setEnabled(quark?.Enabled || false);
     setCookie(quark?.Cookie || '');
     setSavePath(quark?.SavePath || '/');
     setPlayTempSavePath(quark?.PlayTempSavePath || '/');
     setOpenListTempPath(quark?.OpenListTempPath || '/');
+    setMobileEnabled(mobile?.Enabled || false);
+    setMobileAuthorization(mobile?.Authorization || '');
   }, [config]);
 
   const handleSave = async () => {
@@ -3729,6 +3734,10 @@ const NetDiskConfigComponent = ({
             SavePath: savePath,
             PlayTempSavePath: playTempSavePath,
             OpenListTempPath: openListTempPath,
+          },
+          Mobile: {
+            Enabled: mobileEnabled,
+            Authorization: mobileAuthorization,
           },
         }),
       });
@@ -3765,6 +3774,34 @@ const NetDiskConfigComponent = ({
         }
 
         showSuccess(data.message || '夸克 Cookie 可读', showAlert);
+      } catch (error) {
+        showError(error instanceof Error ? error.message : '校验失败', showAlert);
+        throw error;
+      }
+    });
+  };
+
+  const handleValidateMobile = async () => {
+    await withLoading('validateMobileNetDisk', async () => {
+      try {
+        const response = await fetch('/api/admin/netdisk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'validate',
+            provider: 'mobile',
+            Mobile: {
+              Authorization: mobileAuthorization,
+            },
+          }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || '校验失败');
+        }
+
+        showSuccess(data.message || '移动云盘验证头格式正常', showAlert);
       } catch (error) {
         showError(error instanceof Error ? error.message : '校验失败', showAlert);
         throw error;
@@ -3879,6 +3916,64 @@ const NetDiskConfigComponent = ({
               className={buttonStyles.primary}
             >
               {isLoading('validateNetDisk') ? '校验中...' : '校验夸克配置'}
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={isLoading('saveNetDisk')}
+              className={buttonStyles.success}
+            >
+              {isLoading('saveNetDisk') ? '保存中...' : '保存配置'}
+            </button>
+          </div>
+        </div>
+      </details>
+
+      <details className='pt-4 border-t border-gray-200 dark:border-gray-700'>
+        <summary className='text-sm font-semibold text-gray-900 dark:text-gray-100 cursor-pointer'>
+          移动云盘
+        </summary>
+        <div className='mt-4 space-y-4'>
+          <div className='flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700'>
+            <div>
+              <h3 className='text-sm font-medium text-gray-900 dark:text-gray-100'>
+                启用移动云盘
+              </h3>
+              <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                开启后，网盘搜索中的移动云盘资源会显示“立即播放”按钮
+              </p>
+            </div>
+            <label className='relative inline-flex items-center cursor-pointer'>
+              <input
+                type='checkbox'
+                checked={mobileEnabled}
+                onChange={(e) => setMobileEnabled(e.target.checked)}
+                className='sr-only peer'
+              />
+              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-pink-600"></div>
+            </label>
+          </div>
+
+          <div>
+            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+              验证头
+            </label>
+            <textarea
+              value={mobileAuthorization}
+              onChange={(e) => setMobileAuthorization(e.target.value)}
+              disabled={!mobileEnabled}
+              rows={5}
+              placeholder='粘贴移动云盘验证头'
+              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-pink-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed'
+            />
+          </div>
+
+          <div className='flex gap-3'>
+            <button
+              onClick={handleValidateMobile}
+              disabled={!mobileEnabled || !mobileAuthorization || isLoading('validateMobileNetDisk')}
+              className={buttonStyles.primary}
+            >
+              {isLoading('validateMobileNetDisk') ? '校验中...' : '校验移动云盘验证头'}
             </button>
             <button
               onClick={handleSave}

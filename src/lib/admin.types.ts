@@ -154,6 +154,10 @@ export interface AdminConfig {
       PlayTempSavePath: string;
       OpenListTempPath: string;
     };
+    Mobile?: {
+      Enabled: boolean;
+      Authorization: string;
+    };
   };
   AIConfig?: {
     Enabled: boolean; // 是否启用AI问片功能

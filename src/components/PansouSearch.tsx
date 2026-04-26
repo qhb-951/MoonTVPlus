@@ -5,8 +5,9 @@ import { AlertCircle, Copy, ExternalLink, Loader2, RefreshCw } from 'lucide-reac
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 
-import Toast, { ToastProps } from '@/components/Toast';
 import { PansouLink, PansouSearchResult } from '@/lib/pansou.client';
+
+import Toast, { ToastProps } from '@/components/Toast';
 
 interface PansouSearchProps {
   keyword: string;
@@ -108,7 +109,7 @@ export default function PansouSearch({
     }
 
     searchPansou();
-  }, [triggerSearch, searchPansou]); // 依赖 triggerSearch 和 searchPansou
+  }, [triggerSearch]); // 只在触发标志变化时搜索，避免 keyword 变化自动搜索
 
   const handleCopy = async (text: string, url: string) => {
     try {
@@ -159,10 +160,10 @@ export default function PansouSearch({
     }
   };
 
-  const handleQuarkInstantPlay = async (link: PansouLink) => {
+  const handleNetdiskInstantPlay = async (cloudType: string, link: PansouLink) => {
     try {
       setPlayingUrl(link.url);
-      const response = await fetch('/api/netdisk/quark/instant-play', {
+      const response = await fetch(cloudType === 'mobile' ? '/api/netdisk/mobile/instant-play' : '/api/netdisk/quark/instant-play', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -180,7 +181,7 @@ export default function PansouSearch({
       }
 
       router.push(
-        `/play?source=quark-temp&id=${encodeURIComponent(data.id)}&title=${encodeURIComponent(data.title || keyword)}`
+        `/play?source=${encodeURIComponent(data.source || (cloudType === 'mobile' ? 'netdisk-mobile' : 'netdisk-quark'))}&id=${encodeURIComponent(data.id)}&title=${encodeURIComponent(data.title || keyword)}`
       );
     } catch (err: any) {
       setToast({
@@ -338,24 +339,26 @@ export default function PansouSearch({
 
                       {/* 操作按钮 */}
                       <div className='flex items-center gap-1 flex-shrink-0'>
-                        {cloudType === 'quark' && (
+                        {(cloudType === 'quark' || cloudType === 'mobile') && (
                           <>
                             <button
-                              onClick={() => handleQuarkInstantPlay(link)}
+                              onClick={() => handleNetdiskInstantPlay(cloudType, link)}
                               disabled={playingUrl === link.url}
                               className='px-2 py-1 rounded-md bg-green-600 hover:bg-green-700 text-white text-xs transition-colors disabled:opacity-60'
                               title='立即播放'
                             >
                               {playingUrl === link.url ? '处理中...' : '立即播放'}
                             </button>
-                            <button
-                              onClick={() => handleQuarkTransfer(link)}
-                              disabled={transferingUrl === link.url}
-                              className='px-2 py-1 rounded-md bg-purple-600 hover:bg-purple-700 text-white text-xs transition-colors disabled:opacity-60'
-                              title='转存到配置目录'
-                            >
-                              {transferingUrl === link.url ? '转存中...' : '转存'}
-                            </button>
+                            {cloudType === 'quark' && (
+                              <button
+                                onClick={() => handleQuarkTransfer(link)}
+                                disabled={transferingUrl === link.url}
+                                className='px-2 py-1 rounded-md bg-purple-600 hover:bg-purple-700 text-white text-xs transition-colors disabled:opacity-60'
+                                title='转存到配置目录'
+                              >
+                                {transferingUrl === link.url ? '转存中...' : '转存'}
+                              </button>
+                            )}
                           </>
                         )}
                         <button

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
 import { createQuarkInstantPlayFolder } from '@/lib/netdisk/quark.client';
+import { NETDISK_QUARK_SOURCE } from '@/lib/netdisk/source';
 import { hasFeaturePermission } from '@/lib/permissions';
 import { base58Encode } from '@/lib/utils';
 
@@ -76,7 +77,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      source: 'quark-temp',
+      source: NETDISK_QUARK_SOURCE,
       id: base58Encode(openlistFolderPath),
       title: title || result.folderName,
       openlistFolderPath,
